@@ -1,8 +1,9 @@
 import discord
 from discord.ext import commands
+import os
 
-# Deine User-ID (Ersetze mit deiner echten ID)
-OWNER_ID = 1074000821836058694  # <-- Ersetze das hier mit deiner echten Discord-ID
+# Deine Discord User-ID
+OWNER_ID = 1074000821836058694  # <--- ERSETZEN!
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -43,16 +44,23 @@ async def on_message(message):
                 await message.author.send(embed=confirm_embed)
                 return
 
-    # .complete Befehl
-    if message.content.startswith(".complete") and message.author.id == OWNER_ID:
-        parts = message.content.split()
-        if len(parts) != 2 or not parts[1].isdigit():
-            await message.channel.send("❌ Invalid usage! Use `.complete <UserID>`.")
-            return
+    # Nur der Owner darf Commands senden
+    if message.author.id != OWNER_ID:
+        return
 
-        user_id = int(parts[1])
-        try:
-            target_user = await bot.fetch_user(user_id)
+    parts = message.content.strip().split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        if message.content.startswith(".complete") or message.content.startswith(".fail"):
+            await message.channel.send("❌ Invalid usage! Use `.complete <UserID>` or `.fail <UserID>`.")
+        return
+
+    command = parts[0]
+    user_id = int(parts[1])
+
+    try:
+        target_user = await bot.fetch_user(user_id)
+
+        if command == ".complete":
             complete_embed = discord.Embed(
                 title="🎉 Congratulations!",
                 description="✅ Your submission has been **approved**! Great job! 🌟",
@@ -68,12 +76,28 @@ async def on_message(message):
             )
             await message.channel.send(embed=confirm)
 
-        except Exception as e:
-            error_embed = discord.Embed(
-                title="⚠️ Error!",
-                description=f"Could not send message to user `{user_id}`.\n`{str(e)}`",
+        elif command == ".fail":
+            fail_embed = discord.Embed(
+                title="❌ Submission Failed",
+                description="😕 Your picture did not meet the requirements.\nPlease try again later. 📷",
                 color=0xff0000
             )
-            await message.channel.send(embed=error_embed)
+            fail_embed.set_footer(text="Better luck next time 🍀")
+            await target_user.send(embed=fail_embed)
+
+            confirm = discord.Embed(
+                title="📪 Message Sent!",
+                description=f"Failure message sent to <@{user_id}> 🚫",
+                color=0xff9900
+            )
+            await message.channel.send(embed=confirm)
+
+    except Exception as e:
+        error_embed = discord.Embed(
+            title="⚠️ Error!",
+            description=f"Could not send message to user `{user_id}`.\n`{str(e)}`",
+            color=0xff0000
+        )
+        await message.channel.send(embed=error_embed)
 
 bot.run(os.getenv("DISCORD_TOKEN"))
