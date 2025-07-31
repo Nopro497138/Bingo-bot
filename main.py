@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 
 # Deine User-ID (Ersetze mit deiner echten ID)
-OWNER_ID = 123456789012345678  # <-- Ersetze das hier mit deiner echten Discord-ID
+OWNER_ID = 1074000821836058694  # <-- Ersetze das hier mit deiner echten Discord-ID
 
 intents = discord.Intents.default()
 intents.messages = True
