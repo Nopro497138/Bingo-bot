@@ -165,7 +165,7 @@ async def on_message(message):
         # Generate image
         img = Image.new("RGB", (500, 500), color=(30, 30, 30))
         draw = ImageDraw.Draw(img)
-        font_path = os.path.join("fonts", "ARIAL.ttf")
+        font_path = /Nopro497138/Bingo-bot/blob/main/fonts/ARIAL.TTF
         font = ImageFont.truetype(font_path, 24)
 
         for r in range(5):
