@@ -160,12 +160,13 @@ async def on_message(message):
         # Save for .bingocomplete
         bingo_state["sheet"] = sheet
         bingo_state["author"] = message.author.name
+        bingo_state["path"] = f"/tmp/bingo_{message.author.id}.png"
 
         # Generate image
         img = Image.new("RGB", (500, 500), color=(30, 30, 30))
         draw = ImageDraw.Draw(img)
         font_path = os.path.join("fonts", "ARIAL.ttf")
-font = ImageFont.truetype(font_path, 24)
+        font = ImageFont.truetype(font_path, 24)
 
         for r in range(5):
             for c in range(5):
@@ -175,7 +176,7 @@ font = ImageFont.truetype(font_path, 24)
                 if text:
                     draw.text((x + 10, y + 30), text, font=font, fill="cyan")
 
-        path = f"/tmp/bingo_{message.author.id}.png"
+        path = bingo_state["path"]
         img.save(path)
 
         file = discord.File(path, filename="bingo.png")
@@ -188,7 +189,7 @@ font = ImageFont.truetype(font_path, 24)
         await message.channel.send(embed=embed, file=file)
 
     elif content.startswith(".bingocomplete"):
-        if "sheet" not in bingo_state:
+        if "sheet" not in bingo_state or "path" not in bingo_state:
             embed = discord.Embed(
                 title="⚠️ Incomplete Bingo Sheet",
                 description="You must use `.bingo <position> <text>` before completing it. 🛑",
@@ -198,12 +199,16 @@ font = ImageFont.truetype(font_path, 24)
             return
 
         guild = discord.utils.get(bot.guilds)
+        if not guild:
+            await message.channel.send("❌ Error: No guilds found.")
+            return
+
         channel = guild.get_channel(CHANNEL_ID)
         if not channel:
             await message.channel.send("❌ Error: Channel not found.")
             return
 
-        path = f"/tmp/bingo_{OWNER_ID}.png"
+        path = bingo_state["path"]
         if not os.path.exists(path):
             await message.channel.send("⚠️ No bingo image found. Use `.bingo` first.")
             return
