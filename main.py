@@ -29,6 +29,23 @@ def save_state(state):
     with open(DATA_FILE, "w") as f:
         json.dump(state, f)
 
+def wrap_text(text, font, max_width):
+    lines = []
+    words = text.split()
+    line = ""
+    for word in words:
+        test_line = f"{line} {word}".strip()
+        test_width, _ = font.getsize(test_line)
+        if test_width <= max_width:
+            line = test_line
+        else:
+            if line:
+                lines.append(line)
+            line = word
+    if line:
+        lines.append(line)
+    return lines
+
 @bot.event
 async def on_ready():
     print(f"\u2705 Logged in as {bot.user}!")
@@ -39,8 +56,8 @@ async def on_ready():
             title="🤖 Bot Commands",
             description=(
                 "**Here are the available commands:**\n\n"
-                "📩 `.complete <UserID>` – Approve a submission\n"
-                "📤 `.fail <UserID>` – Reject a submission\n"
+                "📩 `.complete <position> <UserID>` – Approve a submission and mark a position\n"
+                "📤 `.fail <position> <UserID>` – Reject a submission\n"
                 "🎯 `.bingo <position> <text>` – Create a bingo sheet with custom text\n"
                 "📡 `.bingocomplete` – Send the last bingo sheet to the server"
             ),
@@ -64,11 +81,12 @@ async def on_message(message):
 
     if content.startswith(".complete") or content.startswith(".fail"):
         parts = content.split()
-        if len(parts) != 2 or not parts[1].isdigit():
-            await message.channel.send("❌ Invalid usage! Use `.complete <UserID>` or `.fail <UserID>`.") 
+        if len(parts) != 3 or not parts[2].isdigit():
+            await message.channel.send("❌ Invalid usage! Use `.complete <position> <UserID>` or `.fail <position> <UserID>`.") 
             return
 
-        user_id = int(parts[1])
+        position = parts[1].lower()
+        user_id = int(parts[2])
         try:
             target_user = await bot.fetch_user(user_id)
 
@@ -177,10 +195,21 @@ async def on_message(message):
                             break
                         font_size -= 2
 
-                    text_x = x + (cell_size - text_width) / 2
-                    text_y = y + (cell_size - text_height) / 2
-                    fill_color = "black"
-                    draw.text((text_x, text_y), text, font=font, fill=fill_color)
+                    # Umbruch des Textes, falls nötig
+                    lines = wrap_text(text, font, cell_size - 20)
+
+                    # Berechnung der Gesamt-Höhe des Textes, um ihn vertikal zu zentrieren
+                    total_text_height = sum([font.getsize(line)[1] for line in lines])
+                    y_offset = (cell_size - total_text_height) / 2
+
+                    # Zeichne den Text Zeile für Zeile
+                    for line in lines:
+                        text_width, text_height = font.getsize(line)
+                        text_x = x + (cell_size - text_width) / 2
+                        text_y = y + y_offset
+                        fill_color = "black"
+                        draw.text((text_x, text_y), line, font=font, fill=fill_color)
+                        y_offset += text_height  # Verschiebe den Offset nach unten für die nächste Zeile
 
         path = bingo_state["path"]
         img.save(path)
