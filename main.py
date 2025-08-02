@@ -16,6 +16,7 @@ intents.dm_messages = True
 
 bot = commands.Bot(command_prefix=".", intents=intents)
 
+# In-Memory Bingo Cache
 bingo_state = {}
 
 def load_state():
@@ -59,33 +60,12 @@ async def on_message(message):
     if message.author.id != OWNER_ID:
         return
 
-    if message.attachments:
-        for attachment in message.attachments:
-            if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
-                user = await bot.fetch_user(OWNER_ID)
-                embed = discord.Embed(
-                    title="📸 New Image Received!",
-                    description=f"From: **{message.author}** (`{message.author.id}`)",
-                    color=0x00ffcc
-                )
-                embed.set_image(url=attachment.url)
-                await user.send(embed=embed)
-
-                confirm_embed = discord.Embed(
-                    title="✅ Image Sent Successfully!",
-                    description="Your image was delivered 📦 to the owner!",
-                    color=0x00ff00
-                )
-                confirm_embed.set_footer(text="Thank you! 😊")
-                await message.author.send(embed=confirm_embed)
-                return
-
     content = message.content.strip()
 
     if content.startswith(".complete") or content.startswith(".fail"):
         parts = content.split()
         if len(parts) != 2 or not parts[1].isdigit():
-            await message.channel.send("❌ Invalid usage! Use `.complete <UserID>` or `.fail <UserID>`.")
+            await message.channel.send("❌ Invalid usage! Use `.complete <UserID>` or `.fail <UserID>`.") 
             return
 
         user_id = int(parts[1])
@@ -151,8 +131,18 @@ async def on_message(message):
             return
 
         row, col = pos_map[position]
-        sheet = [["" for _ in range(3)] for _ in range(3)]
-        sheet[1][1] = "🏱"
+
+        # Create or load previous sheet
+        if "sheet" in bingo_state:
+            sheet = bingo_state["sheet"]
+        else:
+            sheet = [["" for _ in range(3)] for _ in range(3)]
+
+        # Remove the middle element (set as empty)
+        if sheet[1][1] == "🏱":
+            sheet[1][1] = ""
+
+        # Set custom text in the requested position
         sheet[row][col] = custom_text
 
         bingo_state["sheet"] = sheet
@@ -189,7 +179,7 @@ async def on_message(message):
 
                     text_x = x + (cell_size - text_width) / 2
                     text_y = y + (cell_size - text_height) / 2
-                    fill_color = "black" if text != "🏱" else "orange"
+                    fill_color = "black"
                     draw.text((text_x, text_y), text, font=font, fill=fill_color)
 
         path = bingo_state["path"]
