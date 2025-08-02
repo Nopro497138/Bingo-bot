@@ -33,6 +33,7 @@ def wrap_text(text, font, max_width):
     lines = []
     words = text.split()
     line = ""
+    
     for word in words:
         test_line = f"{line} {word}".strip()
         bbox = font.getbbox(test_line)  # Use getbbox for better text sizing
@@ -40,11 +41,11 @@ def wrap_text(text, font, max_width):
         if test_width <= max_width:
             line = test_line
         else:
-            if line:
+            if line:  # If the line is not empty, add it to the lines list
                 lines.append(line)
-            line = word
+            line = word  # Start a new line with the current word
     if line:
-        lines.append(line)
+        lines.append(line)  # Add the final line
     return lines
 
 @bot.event
@@ -81,199 +82,170 @@ async def on_message(message):
 
     content = message.content.strip()
 
+    # Verarbeite die Bingo-Befehle explizit und überprüfe zuerst auf die genauen Befehle
+    if content.startswith(".bingo"):
+        if content.startswith(".bingodelete"):
+            await handle_bingodelete(message)
+            return
+        elif content.startswith(".bingocomplete"):
+            await handle_bingocomplete(message)
+            return
+        elif content.startswith(".bingo"):
+            await handle_bingo(message)
+            return
+
+    # Für andere Befehle wie .complete und .fail
     if content.startswith(".complete") or content.startswith(".fail"):
-        parts = content.split()
-        if len(parts) != 2 or not parts[1].isdigit():
-            await message.channel.send("❌ Invalid usage! Use `.complete <UserID>` or `.fail <UserID>`.") 
-            return
+        await handle_complete_fail(message)
 
-        user_id = int(parts[1])
-        try:
-            target_user = await bot.fetch_user(user_id)
+async def handle_bingo(message):
+    parts = message.content.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.channel.send("❌ Usage: `.bingo <position> <text>`")
+        return
 
-            if content.startswith(".complete"):
-                complete_embed = discord.Embed(
-                    title="🎉 Congratulations!",
-                    description="✅ Your submission has been **approved**! Great job! 🌟",
-                    color=0x00ccff
-                )
-                complete_embed.set_footer(text="Stay awesome 😎")
-                await target_user.send(embed=complete_embed)
+    position = parts[1].lower()
+    custom_text = parts[2][:15]
+    pos_map = {
+        "topleft": (0, 0), "top": (0, 1), "topright": (0, 2),
+        "left": (1, 0), "center": (1, 1), "right": (1, 2),
+        "bottomleft": (2, 0), "bottom": (2, 1), "bottomright": (2, 2),
+    }
 
-                confirm = discord.Embed(
-                    title="✅ Message Sent!",
-                    description=f"Successfully notified <@{user_id}> 🎯",
-                    color=0x00ff00
-                )
-                await message.channel.send(embed=confirm)
+    if position not in pos_map:
+        await message.channel.send("❌ Invalid position! Try: topleft, top, center, etc.")
+        return
 
-            elif content.startswith(".fail"):
-                fail_embed = discord.Embed(
-                    title="❌ Submission Failed",
-                    description="😕 Your picture did not meet the requirements.\nPlease try again later. 📷",
-                    color=0xff0000
-                )
-                fail_embed.set_footer(text="Better luck next time 🍀")
-                await target_user.send(embed=fail_embed)
+    row, col = pos_map[position]
 
-                confirm = discord.Embed(
-                    title="📪 Message Sent!",
-                    description=f"Failure message sent to <@{user_id}> ❌",
-                    color=0xff9900
-                )
-                await message.channel.send(embed=confirm)
+    # Create or load previous sheet
+    if "sheet" in bingo_state:
+        sheet = bingo_state["sheet"]
+    else:
+        sheet = [["" for _ in range(3)] for _ in range(3)]
 
-        except Exception as e:
-            error_embed = discord.Embed(
-                title="⚠️ Error!",
-                description=f"Could not send message to user `{user_id}`.\n`{str(e)}`",
-                color=0xff0000
-            )
-            await message.channel.send(embed=error_embed)
+    # Set custom text in the requested position
+    sheet[row][col] = custom_text
 
-    elif content.startswith(".bingo"):
-        parts = content.split(maxsplit=2)
-        if len(parts) < 3:
-            await message.channel.send("❌ Usage: `.bingo <position> <text>`")
-            return
+    bingo_state["sheet"] = sheet
+    bingo_state["author"] = message.author.name
+    bingo_state["path"] = f"/tmp/bingo_{message.author.id}.png"
 
-        position = parts[1].lower()
-        custom_text = parts[2][:15]
-        pos_map = {
-            "topleft": (0, 0), "top": (0, 1), "topright": (0, 2),
-            "left": (1, 0), "center": (1, 1), "right": (1, 2),
-            "bottomleft": (2, 0), "bottom": (2, 1), "bottomright": (2, 2),
-        }
+    cell_size = 160
+    padding = 10
+    img_size = 3 * cell_size + 2 * padding
+    img = Image.new("RGB", (img_size, img_size), color=(240, 240, 240))
+    draw = ImageDraw.Draw(img)
+    font_path = Path("fonts/DejaVuSans.ttf")
 
-        if position not in pos_map:
-            await message.channel.send("❌ Invalid position! Try: topleft, top, center, etc.")
-            return
+    for r in range(3):
+        for c in range(3):
+            x = c * cell_size + padding
+            y = r * cell_size + padding
+            box = [x, y, x + cell_size, y + cell_size]
+            draw.rounded_rectangle(box, radius=20, fill="white", outline="black", width=4)
 
-        row, col = pos_map[position]
+            text = sheet[r][c]
+            if text:
+                font_size = 44
+                while font_size > 10:
+                    try:
+                        font = ImageFont.truetype(str(font_path), font_size)
+                    except:
+                        font = ImageFont.load_default()
+                    bbox = font.getbbox(text)
+                    text_width, text_height = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                    if text_width <= cell_size - 20:
+                        break
+                    font_size -= 2
 
-        # Create or load previous sheet
-        if "sheet" in bingo_state:
-            sheet = bingo_state["sheet"]
-        else:
-            sheet = [["" for _ in range(3)] for _ in range(3)]
+                text_x = x + (cell_size - text_width) / 2
+                text_y = y + (cell_size - text_height) / 2
+                fill_color = "black"
+                
+                # Use wrap_text to handle multi-line text
+                lines = wrap_text(text, font, cell_size - 20)
+                for i, line in enumerate(lines):
+                    text_y = y + (cell_size - len(lines) * text_height) / 2 + i * text_height
+                    draw.text((text_x, text_y), line, font=font, fill=fill_color)
 
-        # Set custom text in the requested position
-        sheet[row][col] = custom_text
+    path = bingo_state["path"]
+    img.save(path)
 
-        bingo_state["sheet"] = sheet
-        bingo_state["author"] = message.author.name
-        bingo_state["path"] = f"/tmp/bingo_{message.author.id}.png"
+    file = discord.File(path, filename="bingo.png")
+    embed = discord.Embed(
+        title="🎲 Your Bingo Sheet is Ready!",
+        description=f"Text placed at `{position}` ✅",
+        color=0x00ffcc
+    )
+    embed.set_image(url="attachment://bingo.png")
+    await message.channel.send(embed=embed, file=file)
 
-        cell_size = 160
-        padding = 10
-        img_size = 3 * cell_size + 2 * padding
-        img = Image.new("RGB", (img_size, img_size), color=(240, 240, 240))
-        draw = ImageDraw.Draw(img)
-        font_path = Path("fonts/DejaVuSans.ttf")
+async def handle_bingodelete(message):
+    # Clear all text in the Bingo sheet
+    bingo_state["sheet"] = [["" for _ in range(3)] for _ in range(3)]
+    bingo_state["path"] = "/tmp/bingo_deleted.png"
+    
+    # Create empty bingo sheet
+    cell_size = 160
+    padding = 10
+    img_size = 3 * cell_size + 2 * padding
+    img = Image.new("RGB", (img_size, img_size), color=(240, 240, 240))
+    draw = ImageDraw.Draw(img)
 
-        for r in range(3):
-            for c in range(3):
-                x = c * cell_size + padding
-                y = r * cell_size + padding
-                box = [x, y, x + cell_size, y + cell_size]
-                draw.rounded_rectangle(box, radius=20, fill="white", outline="black", width=4)
+    for r in range(3):
+        for c in range(3):
+            x = c * cell_size + padding
+            y = r * cell_size + padding
+            box = [x, y, x + cell_size, y + cell_size]
+            draw.rounded_rectangle(box, radius=20, fill="white", outline="black", width=4)
 
-                text = sheet[r][c]
-                if text:
-                    font_size = 44
-                    while font_size > 10:
-                        try:
-                            font = ImageFont.truetype(str(font_path), font_size)
-                        except:
-                            font = ImageFont.load_default()
-                        bbox = font.getbbox(text)
-                        text_width, text_height = bbox[2] - bbox[0], bbox[3] - bbox[1]
-                        if text_width <= cell_size - 20:
-                            break
-                        font_size -= 2
+    path = bingo_state["path"]
+    img.save(path)
 
-                    text_x = x + (cell_size - text_width) / 2
-                    text_y = y + (cell_size - text_height) / 2
-                    fill_color = "black"
-                    draw.text((text_x, text_y), text, font=font, fill=fill_color)
+    file = discord.File(path, filename="bingo_deleted.png")
+    embed = discord.Embed(
+        title="🧹 Bingo Sheet Cleared!",
+        description="All text in your Bingo sheet has been cleared. 🧼",
+        color=0xFF6347
+    )
+    embed.set_image(url="attachment://bingo_deleted.png")
+    await message.channel.send(embed=embed, file=file)
 
-        path = bingo_state["path"]
-        img.save(path)
+async def handle_bingocomplete(message):
+    if "sheet" not in bingo_state or "path" not in bingo_state:
+        await message.channel.send("⚠️ Use `.bingo` first!")
+        return
 
-        file = discord.File(path, filename="bingo.png")
-        embed = discord.Embed(
-            title="🎲 Your Bingo Sheet is Ready!",
-            description=f"Text placed at `{position}` ✅",
-            color=0x00ffcc
-        )
-        embed.set_image(url="attachment://bingo.png")
-        await message.channel.send(embed=embed, file=file)
+    guild = discord.utils.get(bot.guilds)
+    if not guild:
+        await message.channel.send("❌ No guilds found.")
+        return
 
-    elif content.startswith(".bingodelete"):
-        # Clear all text in the Bingo sheet
-        bingo_state["sheet"] = [["" for _ in range(3)] for _ in range(3)]
-        bingo_state["path"] = "/tmp/bingo_deleted.png"
-        
-        # Create empty bingo sheet
-        cell_size = 160
-        padding = 10
-        img_size = 3 * cell_size + 2 * padding
-        img = Image.new("RGB", (img_size, img_size), color=(240, 240, 240))
-        draw = ImageDraw.Draw(img)
+    channel = guild.get_channel(CHANNEL_ID)
+    if not channel:
+        await message.channel.send("❌ Channel not found.")
+        return
 
-        for r in range(3):
-            for c in range(3):
-                x = c * cell_size + padding
-                y = r * cell_size + padding
-                box = [x, y, x + cell_size, y + cell_size]
-                draw.rounded_rectangle(box, radius=20, fill="white", outline="black", width=4)
+    path = bingo_state["path"]
+    if not os.path.exists(path):
+        await message.channel.send("⚠️ Bingo image not found.")
+        return
 
-        path = bingo_state["path"]
-        img.save(path)
+    file = discord.File(path, filename="bingo.png")
+    embed = discord.Embed(
+        title="📡 Bingo Sheet Submitted!",
+        description="Here is the completed bingo sheet 🎉",
+        color=0x00cc66
+    )
+    embed.set_image(url="attachment://bingo.png")
+    await channel.send(embed=embed, file=file)
 
-        file = discord.File(path, filename="bingo_deleted.png")
-        embed = discord.Embed(
-            title="🧹 Bingo Sheet Cleared!",
-            description="All text in your Bingo sheet has been cleared. 🧼",
-            color=0xFF6347
-        )
-        embed.set_image(url="attachment://bingo_deleted.png")
-        await message.channel.send(embed=embed, file=file)
-
-    elif content.startswith(".bingocomplete"):
-        if "sheet" not in bingo_state or "path" not in bingo_state:
-            await message.channel.send("⚠️ Use `.bingo` first!")
-            return
-
-        guild = discord.utils.get(bot.guilds)
-        if not guild:
-            await message.channel.send("❌ No guilds found.")
-            return
-
-        channel = guild.get_channel(CHANNEL_ID)
-        if not channel:
-            await message.channel.send("❌ Channel not found.")
-            return
-
-        path = bingo_state["path"]
-        if not os.path.exists(path):
-            await message.channel.send("⚠️ Bingo image not found.")
-            return
-
-        file = discord.File(path, filename="bingo.png")
-        embed = discord.Embed(
-            title="📡 Bingo Sheet Submitted!",
-            description="Here is the completed bingo sheet 🎉",
-            color=0x00cc66
-        )
-        embed.set_image(url="attachment://bingo.png")
-        await channel.send(embed=embed, file=file)
-
-        confirm = discord.Embed(
-            title="✅ Bingo Sent!",
-            description=f"Posted to <#{CHANNEL_ID}> 🏋️",
-            color=0x00ffcc
-        )
-        await message.channel.send(embed=confirm)
+    confirm = discord.Embed(
+        title="✅ Bingo Sent!",
+        description=f"Posted to <#{CHANNEL_ID}> 🏋️",
+        color=0x00ffcc
+    )
+    await message.channel.send(embed=confirm)
 
 bot.run(os.getenv("DISCORD_TOKEN"))
