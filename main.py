@@ -35,8 +35,8 @@ def wrap_text(text, font, max_width):
     line = ""
     for word in words:
         test_line = f"{line} {word}".strip()
-        bbox = font.getbbox(test_line)  # getbbox statt getsize
-        test_width = bbox[2] - bbox[0]  # Berechne die Breite des Textes
+        bbox = font.getbbox(test_line)  # Use getbbox for better text sizing
+        test_width = bbox[2] - bbox[0]  # Calculate text width
         if test_width <= max_width:
             line = test_line
         else:
@@ -49,7 +49,7 @@ def wrap_text(text, font, max_width):
 
 @bot.event
 async def on_ready():
-    print(f"\u2705 Logged in as {bot.user}!")
+    print(f"✅ Logged in as {bot.user}!")
     state = load_state()
     if not state.get("sent_commands", False):
         owner = await bot.fetch_user(OWNER_ID)
@@ -60,6 +60,7 @@ async def on_ready():
                 "📩 `.complete <UserID>` – Approve a submission\n"
                 "📤 `.fail <UserID>` – Reject a submission\n"
                 "🎯 `.bingo <position> <text>` – Create a bingo sheet with custom text\n"
+                "🧹 `.bingodelete` – Delete all text from the bingo sheet\n"
                 "📡 `.bingocomplete` – Send the last bingo sheet to the server"
             ),
             color=0x7289da
@@ -156,10 +157,6 @@ async def on_message(message):
         else:
             sheet = [["" for _ in range(3)] for _ in range(3)]
 
-        # Remove the middle element (set as empty)
-        if sheet[1][1] == "🏱":
-            sheet[1][1] = ""
-
         # Set custom text in the requested position
         sheet[row][col] = custom_text
 
@@ -210,6 +207,37 @@ async def on_message(message):
             color=0x00ffcc
         )
         embed.set_image(url="attachment://bingo.png")
+        await message.channel.send(embed=embed, file=file)
+
+    elif content.startswith(".bingodelete"):
+        # Clear all text in the Bingo sheet
+        bingo_state["sheet"] = [["" for _ in range(3)] for _ in range(3)]
+        bingo_state["path"] = "/tmp/bingo_deleted.png"
+        
+        # Create empty bingo sheet
+        cell_size = 160
+        padding = 10
+        img_size = 3 * cell_size + 2 * padding
+        img = Image.new("RGB", (img_size, img_size), color=(240, 240, 240))
+        draw = ImageDraw.Draw(img)
+
+        for r in range(3):
+            for c in range(3):
+                x = c * cell_size + padding
+                y = r * cell_size + padding
+                box = [x, y, x + cell_size, y + cell_size]
+                draw.rounded_rectangle(box, radius=20, fill="white", outline="black", width=4)
+
+        path = bingo_state["path"]
+        img.save(path)
+
+        file = discord.File(path, filename="bingo_deleted.png")
+        embed = discord.Embed(
+            title="🧹 Bingo Sheet Cleared!",
+            description="All text in your Bingo sheet has been cleared. 🧼",
+            color=0xFF6347
+        )
+        embed.set_image(url="attachment://bingo_deleted.png")
         await message.channel.send(embed=embed, file=file)
 
     elif content.startswith(".bingocomplete"):
