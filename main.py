@@ -16,10 +16,8 @@ intents.dm_messages = True
 
 bot = commands.Bot(command_prefix=".", intents=intents)
 
-# In-Memory Bingo Cache
 bingo_state = {}
 
-# Einmalige Startmeldung
 def load_state():
     if not os.path.exists(DATA_FILE):
         return {"sent_commands": False}
@@ -32,7 +30,7 @@ def save_state(state):
 
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}!")
+    print(f"\u2705 Logged in as {bot.user}!")
     state = load_state()
     if not state.get("sent_commands", False):
         owner = await bot.fetch_user(OWNER_ID)
@@ -61,7 +59,6 @@ async def on_message(message):
     if message.author.id != OWNER_ID:
         return
 
-    # Bildweiterleitung
     if message.attachments:
         for attachment in message.attachments:
             if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
@@ -122,7 +119,7 @@ async def on_message(message):
 
                 confirm = discord.Embed(
                     title="📪 Message Sent!",
-                    description=f"Failure message sent to <@{user_id}> 🚫",
+                    description=f"Failure message sent to <@{user_id}> ❌",
                     color=0xff9900
                 )
                 await message.channel.send(embed=confirm)
@@ -142,7 +139,7 @@ async def on_message(message):
             return
 
         position = parts[1].lower()
-        custom_text = parts[2][:15]  # Max 15 chars
+        custom_text = parts[2][:15]
         pos_map = {
             "topleft": (0, 0), "top": (0, 1), "topright": (0, 2),
             "left": (1, 0), "center": (1, 1), "right": (1, 2),
@@ -155,44 +152,45 @@ async def on_message(message):
 
         row, col = pos_map[position]
         sheet = [["" for _ in range(3)] for _ in range(3)]
-        sheet[1][1] = "🎁"  # Free spot
+        sheet[1][1] = "🏱"
         sheet[row][col] = custom_text
 
-        # Save for .bingocomplete
         bingo_state["sheet"] = sheet
         bingo_state["author"] = message.author.name
         bingo_state["path"] = f"/tmp/bingo_{message.author.id}.png"
 
-        # Generate image
-        cell_size = 150
+        cell_size = 160
         padding = 10
         img_size = 3 * cell_size + 2 * padding
-        img = Image.new("RGB", (img_size, img_size), color=(30, 30, 30))
+        img = Image.new("RGB", (img_size, img_size), color=(240, 240, 240))
         draw = ImageDraw.Draw(img)
-
         font_path = Path("fonts/DejaVuSans.ttf")
 
         for r in range(3):
             for c in range(3):
                 x = c * cell_size + padding
                 y = r * cell_size + padding
-                draw.rectangle([x, y, x + cell_size, y + cell_size], outline="white", width=3)
+                box = [x, y, x + cell_size, y + cell_size]
+                draw.rounded_rectangle(box, radius=20, fill="white", outline="black", width=4)
+
                 text = sheet[r][c]
                 if text:
-                    font_size = 40
+                    font_size = 44
                     while font_size > 10:
                         try:
                             font = ImageFont.truetype(str(font_path), font_size)
                         except:
                             font = ImageFont.load_default()
-                        text_width, text_height = draw.textsize(text, font=font)
+                        bbox = font.getbbox(text)
+                        text_width, text_height = bbox[2] - bbox[0], bbox[3] - bbox[1]
                         if text_width <= cell_size - 20:
                             break
                         font_size -= 2
 
                     text_x = x + (cell_size - text_width) / 2
                     text_y = y + (cell_size - text_height) / 2
-                    draw.text((text_x, text_y), text, font=font, fill="black")
+                    fill_color = "black" if text != "🏱" else "orange"
+                    draw.text((text_x, text_y), text, font=font, fill=fill_color)
 
         path = bingo_state["path"]
         img.save(path)
@@ -208,27 +206,22 @@ async def on_message(message):
 
     elif content.startswith(".bingocomplete"):
         if "sheet" not in bingo_state or "path" not in bingo_state:
-            embed = discord.Embed(
-                title="⚠️ Incomplete Bingo Sheet",
-                description="You must use `.bingo <position> <text>` before completing it. 🛑",
-                color=0xff5555
-            )
-            await message.channel.send(embed=embed)
+            await message.channel.send("⚠️ Use `.bingo` first!")
             return
 
         guild = discord.utils.get(bot.guilds)
         if not guild:
-            await message.channel.send("❌ Error: No guilds found.")
+            await message.channel.send("❌ No guilds found.")
             return
 
         channel = guild.get_channel(CHANNEL_ID)
         if not channel:
-            await message.channel.send("❌ Error: Channel not found.")
+            await message.channel.send("❌ Channel not found.")
             return
 
         path = bingo_state["path"]
         if not os.path.exists(path):
-            await message.channel.send("⚠️ No bingo image found. Use `.bingo` first.")
+            await message.channel.send("⚠️ Bingo image not found.")
             return
 
         file = discord.File(path, filename="bingo.png")
@@ -242,7 +235,7 @@ async def on_message(message):
 
         confirm = discord.Embed(
             title="✅ Bingo Sent!",
-            description=f"Your bingo sheet was posted to <#{CHANNEL_ID}> 🏁",
+            description=f"Posted to <#{CHANNEL_ID}> 🏋️",
             color=0x00ffcc
         )
         await message.channel.send(embed=confirm)
