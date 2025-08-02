@@ -248,4 +248,54 @@ async def handle_bingocomplete(message):
     )
     await message.channel.send(embed=confirm)
 
+async def handle_complete_fail(message):
+    parts = message.content.split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.channel.send("❌ Invalid usage! Use `.complete <UserID>` or `.fail <UserID>`.") 
+        return
+
+    user_id = int(parts[1])
+    try:
+        target_user = await bot.fetch_user(user_id)
+
+        if message.content.startswith(".complete"):
+            complete_embed = discord.Embed(
+                title="🎉 Congratulations!",
+                description="✅ Your submission has been **approved**! Great job! 🌟",
+                color=0x00ccff
+            )
+            complete_embed.set_footer(text="Stay awesome 😎")
+            await target_user.send(embed=complete_embed)
+
+            confirm = discord.Embed(
+                title="✅ Message Sent!",
+                description=f"Successfully notified <@{user_id}> 🎯",
+                color=0x00ff00
+            )
+            await message.channel.send(embed=confirm)
+
+        elif message.content.startswith(".fail"):
+            fail_embed = discord.Embed(
+                title="❌ Submission Failed",
+                description="😕 Your picture did not meet the requirements.\nPlease try again later. 📷",
+                color=0xff0000
+            )
+            fail_embed.set_footer(text="Better luck next time 🍀")
+            await target_user.send(embed=fail_embed)
+
+            confirm = discord.Embed(
+                title="📪 Message Sent!",
+                description=f"Failure message sent to <@{user_id}> ❌",
+                color=0xff9900
+            )
+            await message.channel.send(embed=confirm)
+
+    except Exception as e:
+        error_embed = discord.Embed(
+            title="⚠️ Error!",
+            description=f"Could not send message to user `{user_id}`.\n`{str(e)}`",
+            color=0xff0000
+        )
+        await message.channel.send(embed=error_embed)
+
 bot.run(os.getenv("DISCORD_TOKEN"))
