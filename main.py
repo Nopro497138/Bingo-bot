@@ -3,6 +3,7 @@ from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont
 import os
 import json
+from pathlib import Path
 
 OWNER_ID = 1074000821836058694
 CHANNEL_ID = 1400939723039707217
@@ -143,9 +144,9 @@ async def on_message(message):
         position = parts[1].lower()
         custom_text = parts[2][:15]  # Max 15 chars
         pos_map = {
-            "topleft": (0, 0), "top": (0, 2), "topright": (0, 4),
-            "left": (2, 0), "center": (2, 2), "right": (2, 4),
-            "bottomleft": (4, 0), "bottom": (4, 2), "bottomright": (4, 4),
+            "topleft": (0, 0), "top": (0, 1), "topright": (0, 2),
+            "left": (1, 0), "center": (1, 1), "right": (1, 2),
+            "bottomleft": (2, 0), "bottom": (2, 1), "bottomright": (2, 2),
         }
 
         if position not in pos_map:
@@ -153,8 +154,8 @@ async def on_message(message):
             return
 
         row, col = pos_map[position]
-        sheet = [["" for _ in range(5)] for _ in range(5)]
-        sheet[2][2] = "🎁"  # Free spot
+        sheet = [["" for _ in range(3)] for _ in range(3)]
+        sheet[1][1] = "🎁"  # Free spot
         sheet[row][col] = custom_text
 
         # Save for .bingocomplete
@@ -163,17 +164,35 @@ async def on_message(message):
         bingo_state["path"] = f"/tmp/bingo_{message.author.id}.png"
 
         # Generate image
-        img = Image.new("RGB", (500, 500), color=(30, 30, 30))
+        cell_size = 150
+        padding = 10
+        img_size = 3 * cell_size + 2 * padding
+        img = Image.new("RGB", (img_size, img_size), color=(30, 30, 30))
         draw = ImageDraw.Draw(img)
-        font = ImageFont.load_default()
 
-        for r in range(5):
-            for c in range(5):
-                x, y = c * 100 + 10, r * 100 + 10
-                draw.rectangle([x, y, x + 80, y + 80], outline="white", width=2)
+        font_path = Path("fonts/DejaVuSans.ttf")
+
+        for r in range(3):
+            for c in range(3):
+                x = c * cell_size + padding
+                y = r * cell_size + padding
+                draw.rectangle([x, y, x + cell_size, y + cell_size], outline="white", width=3)
                 text = sheet[r][c]
                 if text:
-                    draw.text((x + 10, y + 30), text, font=font, fill="cyan")
+                    font_size = 40
+                    while font_size > 10:
+                        try:
+                            font = ImageFont.truetype(str(font_path), font_size)
+                        except:
+                            font = ImageFont.load_default()
+                        text_width, text_height = draw.textsize(text, font=font)
+                        if text_width <= cell_size - 20:
+                            break
+                        font_size -= 2
+
+                    text_x = x + (cell_size - text_width) / 2
+                    text_y = y + (cell_size - text_height) / 2
+                    draw.text((text_x, text_y), text, font=font, fill="black")
 
         path = bingo_state["path"]
         img.save(path)
