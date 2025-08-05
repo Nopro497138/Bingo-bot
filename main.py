@@ -326,4 +326,4 @@ async def complete_cmd(ctx, position: str = None, target_user_id: str = None):
 
 # Run the bot
 if __name__ == "__main__":
-    bot.run(os.getenv(DISCORD_TOKEN))
+    bot.run(os.getenv("DISCORD_TOKEN"))
