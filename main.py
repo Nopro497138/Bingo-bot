@@ -39,7 +39,10 @@ pos_map = {
 
 def wrap_text_centered(draw, text, font, box_width, box_height):
     # Wrap text using textwrap, approximate char width
-    max_chars_per_line = max(1, box_width // draw.textsize("A", font=font)[0])
+    max_chars_per_line = max(1, box_width // bbox = draw.textbbox((0, 0), text, font=font)
+width = bbox[2] - bbox[0]
+height = bbox[3] - bbox[1]
+)[0])
     lines = textwrap.wrap(text, width=max_chars_per_line)
 
     # Calculate total height of text block
