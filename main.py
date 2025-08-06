@@ -4,7 +4,6 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 import json
 from pathlib import Path
-import textwrap
 
 OWNER_ID = 1074000821836058694
 CHANNEL_ID = 1400939723039707217
@@ -37,20 +36,56 @@ def save_state(state):
     with open(DATA_FILE, "w") as f:
         json.dump(state, f)
 
-def wrap_text_centered(draw, text, font, box_width, box_height):
-    bbox = draw.textbbox((0, 0), "A", font=font)
-    char_width = bbox[2] - bbox[0]
-    max_chars_per_line = max(1, box_width // char_width)
+def fit_text_to_box(draw, text, font_path, max_width, max_height, max_font_size=44, min_font_size=10):
+    """
+    Find the biggest font size so that the text fits into max_width x max_height box.
+    Returns: (font, lines, line_height)
+    """
+    font_size = max_font_size
+    while font_size >= min_font_size:
+        try:
+            font = ImageFont.truetype(str(font_path), font_size)
+        except Exception:
+            font = ImageFont.load_default()
 
-    lines = textwrap.wrap(text, width=max_chars_per_line)
+        # Measure text bbox
+        bbox = draw.textbbox((0,0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
 
-    bbox_line = draw.textbbox((0, 0), "Ay", font=font)
-    line_height = bbox_line[3] - bbox_line[1]
+        # Approximate line height (including some spacing)
+        line_height = text_height * 1.2
 
-    total_height = line_height * len(lines)
-    y_text = (box_height - total_height) / 2
+        # If text fits in width and height, break
+        if text_width <= max_width and line_height <= max_height:
+            return font, [text], line_height
 
-    return lines, y_text, line_height
+        # For long text, try to split into multiple lines (break at spaces)
+        words = text.split()
+        lines = []
+        current_line = ""
+        for word in words:
+            test_line = current_line + (" " if current_line else "") + word
+            bbox_line = draw.textbbox((0,0), test_line, font=font)
+            line_width = bbox_line[2] - bbox_line[0]
+            if line_width <= max_width:
+                current_line = test_line
+            else:
+                if current_line:
+                    lines.append(current_line)
+                current_line = word
+        if current_line:
+            lines.append(current_line)
+
+        total_height = line_height * len(lines)
+        if total_height <= max_height:
+            return font, lines, line_height
+
+        font_size -= 2
+
+    # Fallback small font
+    font = ImageFont.truetype(str(font_path), min_font_size)
+    return font, [text], min_font_size * 1.2
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}!")
@@ -119,13 +154,8 @@ async def draw_and_save_bingo(sheet, gray_positions, save_path):
 
             text = sheet[r][c]
             if text:
-                try:
-                    font = ImageFont.truetype(str(font_path), 36)
-                except Exception:
-                    font = ImageFont.load_default()
-
-                lines, y_text, line_height = wrap_text_centered(draw, text, font, cell_size - 20, cell_size - 20)
-                current_y = y + y_text
+                font, lines, line_height = fit_text_to_box(draw, text, font_path, cell_size - 20, cell_size - 20)
+                current_y = y + (cell_size - line_height * len(lines)) / 2
                 for line in lines:
                     bbox = draw.textbbox((0, 0), line, font=font)
                     text_width = bbox[2] - bbox[0]
@@ -145,7 +175,7 @@ async def handle_bingo(message):
         return
 
     position = parts[1].lower()
-    custom_text = parts[2][:30]
+    custom_text = parts[2][:50]
 
     if position not in pos_map:
         await message.channel.send(embed=discord.Embed(
@@ -283,7 +313,6 @@ async def handle_complete_fail(message):
         try:
             last_msg_id = message_cache.get(user_id)
             if last_msg_id:
-                # Fetch the last message sent to user and edit
                 last_msg = await target_user.fetch_message(last_msg_id)
                 await last_msg.edit(embed=embed, attachments=[file])
             else:
