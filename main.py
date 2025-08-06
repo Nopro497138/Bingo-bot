@@ -101,16 +101,28 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    if not isinstance(message.channel, discord.DMChannel):
-        return
-
-    if message.author.id != OWNER_ID:
-        # Track PNG submissions from all users
+    # Forward PNG images sent by users to OWNER in an embed with emojis
+    if isinstance(message.channel, discord.DMChannel) and message.author.id != OWNER_ID:
         if message.attachments:
             for attachment in message.attachments:
                 if attachment.filename.lower().endswith(".png"):
                     submissions.add(message.author.id)
-                    print(f"✅ PNG received from {message.author.id}")
+                    owner = await bot.fetch_user(OWNER_ID)
+                    embed = discord.Embed(
+                        title="📥 New PNG Submission!",
+                        description=(
+                            f"User: {message.author} (`{message.author.id}`) has sent a PNG image! 🎉\n"
+                            f"Please review their submission."
+                        ),
+                        color=0x00ffcc
+                    )
+                    embed.set_image(url=attachment.url)
+                    embed.set_footer(text="Use .complete or .fail commands to respond.")
+                    await owner.send(embed=embed)
+        return
+
+    # Only OWNER can use commands
+    if message.author.id != OWNER_ID:
         return
 
     content = message.content.strip()
@@ -126,6 +138,7 @@ async def on_message(message):
     elif content.startswith(".complete") or content.startswith(".fail"):
         await handle_complete_fail(message)
 
+
 async def draw_and_save_bingo(sheet, gray_positions, save_path):
     cell_size = 160
     padding = 10
@@ -134,32 +147,23 @@ async def draw_and_save_bingo(sheet, gray_positions, save_path):
     draw = ImageDraw.Draw(img)
     font_path = Path("fonts/DejaVuSans.ttf")
 
-    def draw_shadowed_rounded_rectangle(box, radius, fill, outline, shadow_color=(0,0,0,100), shadow_offset=3):
-        shadow_img = Image.new("RGBA", img.size, (0,0,0,0))
-        shadow_draw = ImageDraw.Draw(shadow_img)
-        shadow_box = [box[0]+shadow_offset, box[1]+shadow_offset, box[2]+shadow_offset, box[3]+shadow_offset]
-        shadow_draw.rounded_rectangle(shadow_box, radius=radius, fill=shadow_color)
-        img.paste(shadow_img, (0,0), shadow_img)
-        draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=3)
-
     for r in range(3):
         for c in range(3):
             x = c * cell_size + padding
             y = r * cell_size + padding
             box = [x, y, x + cell_size, y + cell_size]
 
+            base_color = (255, 255, 255)
             if (r, c) in gray_positions:
                 base_color = (170, 170, 170)
-            else:
-                base_color = (255, 255, 255)
 
-            # Simple vertical gradient fill
+            # Draw cell background with a subtle gradient
             for i in range(cell_size):
                 blend = int(base_color[0] * (1 - i/cell_size) + 200 * (i/cell_size))
                 for px in range(cell_size):
                     img.putpixel((x+px, y+i), (blend, blend, blend))
 
-            draw_shadowed_rounded_rectangle(box, radius=20, fill=None, outline="black")
+            draw.rounded_rectangle(box, radius=20, fill=None, outline="black", width=3)
 
             text = sheet[r][c]
             if text:
@@ -169,13 +173,11 @@ async def draw_and_save_bingo(sheet, gray_positions, save_path):
                     bbox = draw.textbbox((0, 0), line, font=font)
                     text_width = bbox[2] - bbox[0]
                     text_x = x + (cell_size - text_width) / 2
-
-                    shadow_offset = 1
-                    draw.text((text_x + shadow_offset, current_y + shadow_offset), line, font=font, fill=(0,0,0,100))
                     draw.text((text_x, current_y), line, font=font, fill="black")
                     current_y += line_height
 
     img.save(save_path)
+
 
 async def handle_bingo(message):
     parts = message.content.split(maxsplit=2)
@@ -316,8 +318,8 @@ async def handle_complete_fail(message):
 
         file = discord.File(user_path, filename="bingo.png")
         embed = discord.Embed(
-            title="✅ Field Marked Complete!",
-            description=f"The position `{position}` has been marked as completed! 🎉",
+            title="✅ Field Marked Complete! 🎉",
+            description=f"Position `{position}` marked as completed for you! 💪",
             color=0x00ccff
         )
         embed.set_image(url="attachment://bingo.png")
@@ -325,7 +327,8 @@ async def handle_complete_fail(message):
         try:
             last_msg_id = message_cache.get(user_id)
             if last_msg_id:
-                last_msg = await target_user.fetch_message(last_msg_id)
+                channel = await target_user.create_dm()
+                last_msg = await channel.fetch_message(last_msg_id)
                 await last_msg.edit(embed=embed, attachments=[file])
             else:
                 sent = await target_user.send(embed=embed, file=file)
@@ -336,8 +339,8 @@ async def handle_complete_fail(message):
 
         if check_bingo_win(gray_list):
             win_embed = discord.Embed(
-                title="🏆 Bingo Completed!",
-                description="🎉 You have 3 in a row! Congratulations! 🥳",
+                title="🏆 BINGO! You won! 🎉",
+                description="You completed 3 in a row! Congratulations! 🥳",
                 color=0xFFD700
             )
             await target_user.send(embed=win_embed)
@@ -352,7 +355,7 @@ async def handle_complete_fail(message):
     elif message.content.startswith(".fail"):
         fail_embed = discord.Embed(
             title="❌ Field Rejected",
-            description=f"The position `{position}` was rejected. 😕\nPlease try again later! 📷",
+            description=f"Your submission for position `{position}` was rejected. 😕 Please try again later! 📷",
             color=0xFF0000
         )
         fail_embed.set_footer(text="Better luck next time 🍀")
