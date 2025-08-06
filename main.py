@@ -48,25 +48,13 @@ def fit_text_to_box(draw, text, font_path, max_width, max_height, max_font_size=
         except Exception:
             font = ImageFont.load_default()
 
-        # Measure text bbox
-        bbox = draw.textbbox((0,0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-
-        # Approximate line height (including some spacing)
-        line_height = text_height * 1.2
-
-        # If text fits in width and height, break
-        if text_width <= max_width and line_height <= max_height:
-            return font, [text], line_height
-
-        # For long text, try to split into multiple lines (break at spaces)
         words = text.split()
         lines = []
         current_line = ""
+
         for word in words:
             test_line = current_line + (" " if current_line else "") + word
-            bbox_line = draw.textbbox((0,0), test_line, font=font)
+            bbox_line = draw.textbbox((0, 0), test_line, font=font)
             line_width = bbox_line[2] - bbox_line[0]
             if line_width <= max_width:
                 current_line = test_line
@@ -77,13 +65,15 @@ def fit_text_to_box(draw, text, font_path, max_width, max_height, max_font_size=
         if current_line:
             lines.append(current_line)
 
+        bbox = draw.textbbox((0, 0), "Ay", font=font)
+        line_height = (bbox[3] - bbox[1]) * 1.2
         total_height = line_height * len(lines)
+
         if total_height <= max_height:
             return font, lines, line_height
 
         font_size -= 2
 
-    # Fallback small font
     font = ImageFont.truetype(str(font_path), min_font_size)
     return font, [text], min_font_size * 1.2
 @bot.event
@@ -115,7 +105,7 @@ async def on_message(message):
         return
 
     if message.author.id != OWNER_ID:
-        # Track PNG submissions from any user, including owner
+        # Track PNG submissions from all users
         if message.attachments:
             for attachment in message.attachments:
                 if attachment.filename.lower().endswith(".png"):
@@ -140,26 +130,48 @@ async def draw_and_save_bingo(sheet, gray_positions, save_path):
     cell_size = 160
     padding = 10
     img_size = 3 * cell_size + 2 * padding
-    img = Image.new("RGB", (img_size, img_size), color=(240, 240, 240))
+    img = Image.new("RGB", (img_size, img_size), color=(230, 230, 230))
     draw = ImageDraw.Draw(img)
     font_path = Path("fonts/DejaVuSans.ttf")
+
+    def draw_shadowed_rounded_rectangle(box, radius, fill, outline, shadow_color=(0,0,0,100), shadow_offset=3):
+        shadow_img = Image.new("RGBA", img.size, (0,0,0,0))
+        shadow_draw = ImageDraw.Draw(shadow_img)
+        shadow_box = [box[0]+shadow_offset, box[1]+shadow_offset, box[2]+shadow_offset, box[3]+shadow_offset]
+        shadow_draw.rounded_rectangle(shadow_box, radius=radius, fill=shadow_color)
+        img.paste(shadow_img, (0,0), shadow_img)
+        draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=3)
 
     for r in range(3):
         for c in range(3):
             x = c * cell_size + padding
             y = r * cell_size + padding
             box = [x, y, x + cell_size, y + cell_size]
-            fill_color = "gray" if (r, c) in gray_positions else "white"
-            draw.rounded_rectangle(box, radius=20, fill=fill_color, outline="black", width=4)
+
+            if (r, c) in gray_positions:
+                base_color = (170, 170, 170)
+            else:
+                base_color = (255, 255, 255)
+
+            # Simple vertical gradient fill
+            for i in range(cell_size):
+                blend = int(base_color[0] * (1 - i/cell_size) + 200 * (i/cell_size))
+                for px in range(cell_size):
+                    img.putpixel((x+px, y+i), (blend, blend, blend))
+
+            draw_shadowed_rounded_rectangle(box, radius=20, fill=None, outline="black")
 
             text = sheet[r][c]
             if text:
-                font, lines, line_height = fit_text_to_box(draw, text, font_path, cell_size - 20, cell_size - 20)
+                font, lines, line_height = fit_text_to_box(draw, text, font_path, cell_size - 24, cell_size - 24)
                 current_y = y + (cell_size - line_height * len(lines)) / 2
                 for line in lines:
                     bbox = draw.textbbox((0, 0), line, font=font)
                     text_width = bbox[2] - bbox[0]
                     text_x = x + (cell_size - text_width) / 2
+
+                    shadow_offset = 1
+                    draw.text((text_x + shadow_offset, current_y + shadow_offset), line, font=font, fill=(0,0,0,100))
                     draw.text((text_x, current_y), line, font=font, fill="black")
                     current_y += line_height
 
