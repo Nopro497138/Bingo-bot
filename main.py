@@ -21,6 +21,12 @@ bingo_state = {}
 submissions = set()
 message_cache = {}
 
+pos_map = {
+    "topleft": (0, 0), "top": (0, 1), "topright": (0, 2),
+    "left": (1, 0), "center": (1, 1), "right": (1, 2),
+    "bottomleft": (2, 0), "bottom": (2, 1), "bottomright": (2, 2),
+}
+
 def load_state():
     if not os.path.exists(DATA_FILE):
         return {"sent_commands": False}
@@ -31,25 +37,19 @@ def save_state(state):
     with open(DATA_FILE, "w") as f:
         json.dump(state, f)
 
-pos_map = {
-    "topleft": (0, 0), "top": (0, 1), "topright": (0, 2),
-    "left": (1, 0), "center": (1, 1), "right": (1, 2),
-    "bottomleft": (2, 0), "bottom": (2, 1), "bottomright": (2, 2),
-}
-
 def wrap_text_centered(draw, text, font, box_width, box_height):
-    # Wrap text using textwrap, approximate char width
-    max_chars_per_line = max(1, box_width // bbox = draw.textbbox((0, 0), text, font=font)
-width = bbox[2] - bbox[0]
-height = bbox[3] - bbox[1]
-)[0])
+    bbox = draw.textbbox((0, 0), "A", font=font)
+    char_width = bbox[2] - bbox[0]
+    max_chars_per_line = max(1, box_width // char_width)
+
     lines = textwrap.wrap(text, width=max_chars_per_line)
 
-    # Calculate total height of text block
-    line_height = font.getsize("Ay")[1]
-    total_height = line_height * len(lines)
+    bbox_line = draw.textbbox((0, 0), "Ay", font=font)
+    line_height = bbox_line[3] - bbox_line[1]
 
+    total_height = line_height * len(lines)
     y_text = (box_height - total_height) / 2
+
     return lines, y_text, line_height
 @bot.event
 async def on_ready():
@@ -101,6 +101,40 @@ async def on_message(message):
     elif content.startswith(".complete") or content.startswith(".fail"):
         await handle_complete_fail(message)
 
+async def draw_and_save_bingo(sheet, gray_positions, save_path):
+    cell_size = 160
+    padding = 10
+    img_size = 3 * cell_size + 2 * padding
+    img = Image.new("RGB", (img_size, img_size), color=(240, 240, 240))
+    draw = ImageDraw.Draw(img)
+    font_path = Path("fonts/DejaVuSans.ttf")
+
+    for r in range(3):
+        for c in range(3):
+            x = c * cell_size + padding
+            y = r * cell_size + padding
+            box = [x, y, x + cell_size, y + cell_size]
+            fill_color = "gray" if (r, c) in gray_positions else "white"
+            draw.rounded_rectangle(box, radius=20, fill=fill_color, outline="black", width=4)
+
+            text = sheet[r][c]
+            if text:
+                try:
+                    font = ImageFont.truetype(str(font_path), 36)
+                except Exception:
+                    font = ImageFont.load_default()
+
+                lines, y_text, line_height = wrap_text_centered(draw, text, font, cell_size - 20, cell_size - 20)
+                current_y = y + y_text
+                for line in lines:
+                    bbox = draw.textbbox((0, 0), line, font=font)
+                    text_width = bbox[2] - bbox[0]
+                    text_x = x + (cell_size - text_width) / 2
+                    draw.text((text_x, current_y), line, font=font, fill="black")
+                    current_y += line_height
+
+    img.save(save_path)
+
 async def handle_bingo(message):
     parts = message.content.split(maxsplit=2)
     if len(parts) < 3:
@@ -111,7 +145,7 @@ async def handle_bingo(message):
         return
 
     position = parts[1].lower()
-    custom_text = parts[2][:30]  # Limit length
+    custom_text = parts[2][:30]
 
     if position not in pos_map:
         await message.channel.send(embed=discord.Embed(
@@ -138,35 +172,6 @@ async def handle_bingo(message):
     )
     embed.set_image(url="attachment://bingo.png")
     await message.channel.send(embed=embed, file=file)
-
-async def draw_and_save_bingo(sheet, gray_positions, save_path):
-    cell_size = 160
-    padding = 10
-    img_size = 3 * cell_size + 2 * padding
-    img = Image.new("RGB", (img_size, img_size), color=(240, 240, 240))
-    draw = ImageDraw.Draw(img)
-    font_path = Path("fonts/DejaVuSans.ttf")
-
-    for r in range(3):
-        for c in range(3):
-            x = c * cell_size + padding
-            y = r * cell_size + padding
-            box = [x, y, x + cell_size, y + cell_size]
-            fill_color = "gray" if (r, c) in gray_positions else "white"
-            draw.rounded_rectangle(box, radius=20, fill=fill_color, outline="black", width=4)
-
-            text = sheet[r][c]
-            if text:
-                font = ImageFont.truetype(str(font_path), 36)
-                lines, y_text, line_height = wrap_text_centered(draw, text, font, cell_size - 20, cell_size - 20)
-                current_y = y + y_text
-                for line in lines:
-                    w, h = draw.textsize(line, font=font)
-                    text_x = x + (cell_size - w) / 2
-                    draw.text((text_x, current_y), line, font=font, fill="black")
-                    current_y += h
-
-    img.save(save_path)
 
 async def handle_bingodelete(message):
     bingo_state["sheet"] = [["" for _ in range(3)] for _ in range(3)]
@@ -221,16 +226,15 @@ async def handle_bingocomplete(message):
         color=0x00ffcc
     )
     await message.channel.send(embed=confirm)
-completed_positions = {}  # user_id: list of (row, col)
+completed_positions = {}  # user_id -> list of (row, col)
 
 def check_bingo_win(gray_positions):
-    # Check rows and cols
+    # Check rows, columns, diagonals for 3 in a row
     for i in range(3):
         if all((i, j) in gray_positions for j in range(3)):
             return True
         if all((j, i) in gray_positions for j in range(3)):
             return True
-    # Check diagonals
     if all((i, i) in gray_positions for i in range(3)):
         return True
     if all((i, 2 - i) in gray_positions for i in range(3)):
@@ -270,8 +274,8 @@ async def handle_complete_fail(message):
 
         file = discord.File(user_path, filename="bingo.png")
         embed = discord.Embed(
-            title="✅ Field Completed!",
-            description=f"The position `{position}` was marked as **complete**! 🎉",
+            title="✅ Field Marked Complete!",
+            description=f"The position `{position}` has been marked as completed! 🎉",
             color=0x00ccff
         )
         embed.set_image(url="attachment://bingo.png")
@@ -279,6 +283,7 @@ async def handle_complete_fail(message):
         try:
             last_msg_id = message_cache.get(user_id)
             if last_msg_id:
+                # Fetch the last message sent to user and edit
                 last_msg = await target_user.fetch_message(last_msg_id)
                 await last_msg.edit(embed=embed, attachments=[file])
             else:
@@ -291,33 +296,33 @@ async def handle_complete_fail(message):
         if check_bingo_win(gray_list):
             win_embed = discord.Embed(
                 title="🏆 Bingo Completed!",
-                description="You got 3 in a row! Congratulations! 🎊🎉",
+                description="🎉 You have 3 in a row! Congratulations! 🥳",
                 color=0xFFD700
             )
             await target_user.send(embed=win_embed)
 
         confirm = discord.Embed(
             title="✅ User Updated!",
-            description=f"Marked `{position}` as completed for <@{user_id}> 💪",
+            description=f"Position `{position}` marked as completed for <@{user_id}> 💪",
             color=0x00ff00
         )
         await message.channel.send(embed=confirm)
 
     elif message.content.startswith(".fail"):
-        embed = discord.Embed(
+        fail_embed = discord.Embed(
             title="❌ Field Rejected",
-            description=f"The position `{position}` did **not** meet the requirements. 😕\nPlease try again later! 📷",
+            description=f"The position `{position}` was rejected. 😕\nPlease try again later! 📷",
             color=0xFF0000
         )
-        embed.set_footer(text="Better luck next time 🍀")
+        fail_embed.set_footer(text="Better luck next time 🍀")
         try:
-            await target_user.send(embed=embed)
+            await target_user.send(embed=fail_embed)
         except:
             pass
 
         confirm = discord.Embed(
             title="📪 Rejection Sent!",
-            description=f"Rejected `{position}` for <@{user_id}> ❌",
+            description=f"Rejection message sent for `{position}` to <@{user_id}> ❌",
             color=0xFF9900
         )
         await message.channel.send(embed=confirm)
