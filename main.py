@@ -198,7 +198,7 @@ async def draw_and_save_bingo(sheet, gray_positions, save_path):
         title_font = ImageFont.truetype(str(font_path), 22)
     except:
         title_font = ImageFont.load_default()
-    title = "BINGO"
+    title = ""
     tb = draw.textbbox((0,0), title, font=title_font)
     draw.text(((img_size - (tb[2]-tb[0]))/2, 4), title, font=title_font, fill=(40,40,40))
 
