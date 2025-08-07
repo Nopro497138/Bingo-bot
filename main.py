@@ -19,6 +19,7 @@ bot = commands.Bot(command_prefix=".", intents=intents)
 bingo_state = {}
 submissions = set()
 message_cache = {}
+completed_positions = {}  # user_id -> list of (row, col)
 
 pos_map = {
     "topleft": (0, 0), "top": (0, 1), "topright": (0, 2),
@@ -37,10 +38,6 @@ def save_state(state):
         json.dump(state, f)
 
 def fit_text_to_box(draw, text, font_path, max_width, max_height, max_font_size=44, min_font_size=10):
-    """
-    Find the biggest font size so that the text fits into max_width x max_height box.
-    Returns: (font, lines, line_height)
-    """
     font_size = max_font_size
     while font_size >= min_font_size:
         try:
@@ -76,6 +73,7 @@ def fit_text_to_box(draw, text, font_path, max_width, max_height, max_font_size=
 
     font = ImageFont.truetype(str(font_path), min_font_size)
     return font, [text], min_font_size * 1.2
+
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}!")
@@ -89,7 +87,7 @@ async def on_ready():
                 "✅ `.complete <position> <userID>` – Mark a bingo field as complete\n"
                 "❌ `.fail <position> <userID>` – Reject a user submission\n"
                 "🎯 `.bingo <position> <text>` – Add text to bingo sheet\n"
-                "🧹 `.bingodelete` – Clear the sheet\n"
+                "🧹 `.bingodelete` – Clear the sheet & all progress\n"
                 "📡 `.bingocomplete` – Post to channel"
             ),
             color=0x7289da
@@ -101,7 +99,7 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    # Forward PNG images sent by users to OWNER in an embed with emojis
+    # Forward PNG images sent by users in DM to OWNER in an embed with emojis
     if isinstance(message.channel, discord.DMChannel) and message.author.id != OWNER_ID:
         if message.attachments:
             for attachment in message.attachments:
@@ -109,19 +107,19 @@ async def on_message(message):
                     submissions.add(message.author.id)
                     owner = await bot.fetch_user(OWNER_ID)
                     embed = discord.Embed(
-                        title="📥 New PNG Submission!",
+                        title="📥 New PNG Submission! 🎨",
                         description=(
-                            f"User: {message.author} (`{message.author.id}`) has sent a PNG image! 🎉\n"
-                            f"Please review their submission."
+                            f"👤 **User:** {message.author} (`{message.author.id}`)\n"
+                            f"🖼️ Sent a PNG image for review!\n\n"
+                            "✅ Use `.complete` or ❌ `.fail` to respond."
                         ),
                         color=0x00ffcc
                     )
                     embed.set_image(url=attachment.url)
-                    embed.set_footer(text="Use .complete or .fail commands to respond.")
+                    embed.set_footer(text="Bingo submission received 📦")
                     await owner.send(embed=embed)
         return
 
-    # Only OWNER can use commands
     if message.author.id != OWNER_ID:
         return
 
@@ -134,10 +132,9 @@ async def on_message(message):
             await handle_bingocomplete(message)
         else:
             await handle_bingo(message)
-
     elif content.startswith(".complete") or content.startswith(".fail"):
         await handle_complete_fail(message)
-
+# --- Part 2/3 -- Draw sheet, bingo commands, and fixed bingodelete ---
 
 async def draw_and_save_bingo(sheet, gray_positions, save_path):
     cell_size = 160
@@ -147,34 +144,63 @@ async def draw_and_save_bingo(sheet, gray_positions, save_path):
     draw = ImageDraw.Draw(img)
     font_path = Path("fonts/DejaVuSans.ttf")
 
+    def draw_shadowed_rounded_rectangle(draw_img, box, radius, outline, shadow_offset=3):
+        # Simple shadow by drawing slightly offset rounded rectangle in semi-transparent black on an RGBA layer
+        shadow_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        shadow_draw = ImageDraw.Draw(shadow_layer)
+        shadow_box = [box[0]+shadow_offset, box[1]+shadow_offset, box[2]+shadow_offset, box[3]+shadow_offset]
+        shadow_draw.rounded_rectangle(shadow_box, radius=radius, fill=(0,0,0,80))
+        img.paste(shadow_layer, (0,0), shadow_layer)
+        draw.rounded_rectangle(box, radius=radius, fill=None, outline=outline, width=3)
+
     for r in range(3):
         for c in range(3):
             x = c * cell_size + padding
             y = r * cell_size + padding
             box = [x, y, x + cell_size, y + cell_size]
 
-            base_color = (255, 255, 255)
-            if (r, c) in gray_positions:
-                base_color = (170, 170, 170)
+            # base color: gray if completed, otherwise white
+            base_color = (170, 170, 170) if (r, c) in gray_positions else (255, 255, 255)
 
-            # Draw cell background with a subtle gradient
+            # vertical gradient fill (subtle)
             for i in range(cell_size):
-                blend = int(base_color[0] * (1 - i/cell_size) + 200 * (i/cell_size))
+                blend = int(base_color[0] * (1 - i / cell_size) + 245 * (i / cell_size))
                 for px in range(cell_size):
-                    img.putpixel((x+px, y+i), (blend, blend, blend))
+                    img.putpixel((x + px, y + i), (blend, blend, blend))
 
-            draw.rounded_rectangle(box, radius=20, fill=None, outline="black", width=3)
+            # border + shadow
+            draw_shadowed_rounded_rectangle(draw, box, radius=18, outline="black", shadow_offset=3)
 
+            # draw text if present
             text = sheet[r][c]
             if text:
-                font, lines, line_height = fit_text_to_box(draw, text, font_path, cell_size - 24, cell_size - 24)
+                try:
+                    font, lines, line_height = fit_text_to_box(draw, text, font_path, cell_size - 24, cell_size - 24)
+                except Exception:
+                    # fallback
+                    font = ImageFont.load_default()
+                    lines = [text]
+                    line_height = 14
+
                 current_y = y + (cell_size - line_height * len(lines)) / 2
                 for line in lines:
                     bbox = draw.textbbox((0, 0), line, font=font)
                     text_width = bbox[2] - bbox[0]
                     text_x = x + (cell_size - text_width) / 2
+                    # subtle text shadow for readability
+                    draw.text((text_x + 1, current_y + 1), line, font=font, fill=(0,0,0,100))
                     draw.text((text_x, current_y), line, font=font, fill="black")
                     current_y += line_height
+
+    # small title/footer to make sheet look nicer
+    title_font = None
+    try:
+        title_font = ImageFont.truetype(str(font_path), 22)
+    except:
+        title_font = ImageFont.load_default()
+    title = "BINGO"
+    tb = draw.textbbox((0,0), title, font=title_font)
+    draw.text(((img_size - (tb[2]-tb[0]))/2, 4), title, font=title_font, fill=(40,40,40))
 
     img.save(save_path)
 
@@ -183,18 +209,20 @@ async def handle_bingo(message):
     parts = message.content.split(maxsplit=2)
     if len(parts) < 3:
         await message.channel.send(embed=discord.Embed(
-            description="❌ Usage: `.bingo <position> <text>`",
+            title="❌ Usage",
+            description="`.bingo <position> <text>` — Example: `.bingo center Collect 5 apples`",
             color=0xFF0000
         ))
         return
 
     position = parts[1].lower()
-    custom_text = parts[2][:50]
+    custom_text = parts[2][:80]  # allow more characters; fitting will reduce font
 
     if position not in pos_map:
         await message.channel.send(embed=discord.Embed(
-            description="❌ Invalid position! Use: topleft, top, center, etc.",
-            color=0xFF0000
+            title="❌ Invalid position",
+            description="Use positions like `topleft`, `top`, `center`, `bottomright`, etc.",
+            color=0xFF4500
         ))
         return
 
@@ -210,31 +238,41 @@ async def handle_bingo(message):
 
     file = discord.File(bingo_state["path"], filename="bingo.png")
     embed = discord.Embed(
-        title="🎲 Your Bingo Sheet is Ready!",
-        description=f"✅ Text placed at `{position}`.",
-        color=0x00ffcc
+        title="🎲 Bingo Sheet Created!",
+        description=f"✅ Placed text at `{position}`. You can `.bingocomplete` to post it to the server.",
+        color=0x00cc99
     )
     embed.set_image(url="attachment://bingo.png")
     await message.channel.send(embed=embed, file=file)
 
+
 async def handle_bingodelete(message):
+    # Reset sheet and important state so previous completed info is cleared
     bingo_state["sheet"] = [["" for _ in range(3)] for _ in range(3)]
     bingo_state["path"] = "/tmp/bingo_deleted.png"
+
+    # --- IMPORTANT FIX: clear per-user progress and cached messages ---
+    completed_positions.clear()
+    message_cache.clear()
+
+    # draw and send cleared image
     await draw_and_save_bingo(bingo_state["sheet"], [], bingo_state["path"])
 
     file = discord.File(bingo_state["path"], filename="bingo_deleted.png")
     embed = discord.Embed(
         title="🧹 Bingo Sheet Cleared!",
-        description="All text has been removed from the bingo sheet! 🧼",
+        description="All text and all user progress have been reset. ✅",
         color=0xFF6347
     )
     embed.set_image(url="attachment://bingo_deleted.png")
     await message.channel.send(embed=embed, file=file)
 
+
 async def handle_bingocomplete(message):
     if "sheet" not in bingo_state or "path" not in bingo_state:
         await message.channel.send(embed=discord.Embed(
-            description="⚠️ Use `.bingo` first!",
+            title="⚠️ Nothing to send",
+            description="Use `.bingo` to create the sheet first.",
             color=0xFF9900
         ))
         return
@@ -242,7 +280,8 @@ async def handle_bingocomplete(message):
     guild = discord.utils.get(bot.guilds)
     if not guild:
         await message.channel.send(embed=discord.Embed(
-            description="❌ No guilds found.",
+            title="❌ No Guild",
+            description="I couldn't find any guild/server to post to.",
             color=0xFF0000
         ))
         return
@@ -250,23 +289,27 @@ async def handle_bingocomplete(message):
     channel = guild.get_channel(CHANNEL_ID)
     if not channel:
         await message.channel.send(embed=discord.Embed(
-            description="❌ Channel not found.",
+            title="❌ Channel Missing",
+            description=f"Could not find channel with ID `{CHANNEL_ID}`.",
             color=0xFF0000
         ))
         return
 
     file = discord.File(bingo_state["path"], filename="bingo.png")
     embed = discord.Embed(
-        title="📡 Bingo Sheet Submitted!",
-        description="The bingo sheet has been posted! 🎉",
+        title="📡 Bingo Sheet Posted!",
+        description="The bingo sheet has been posted to the server. 🎉",
         color=0x00cc66
     )
     embed.set_image(url="attachment://bingo.png")
-    await channel.send(embed=embed, file=file)
+    sent = await channel.send(embed=embed, file=file)
+
+    # store the sent message id if you want to reference it later (not strictly required)
+    bingo_state["last_post_id"] = sent.id
 
     confirm = discord.Embed(
-        title="✅ Bingo Sent!",
-        description=f"Posted to <#{CHANNEL_ID}> 🎯",
+        title="✅ Sent!",
+        description=f"Posted to <#{CHANNEL_ID}>. Use `.complete <position> <UserID>` to mark fields.",
         color=0x00ffcc
     )
     await message.channel.send(embed=confirm)
@@ -289,7 +332,7 @@ async def handle_complete_fail(message):
     parts = message.content.split()
     if len(parts) != 3 or parts[1].lower() not in pos_map or not parts[2].isdigit():
         await message.channel.send(embed=discord.Embed(
-            description="❌ Usage: `.complete <position> <UserID>` or `.fail <position> <UserID>`",
+            description="❌ Usage: .complete <position> <UserID> or .fail <position> <UserID>",
             color=0xFF0000
         ))
         return
@@ -319,7 +362,7 @@ async def handle_complete_fail(message):
         file = discord.File(user_path, filename="bingo.png")
         embed = discord.Embed(
             title="✅ Field Marked Complete! 🎉",
-            description=f"Position `{position}` marked as completed for you! 💪",
+            description=f"Position {position} marked as completed for you! 💪",
             color=0x00ccff
         )
         embed.set_image(url="attachment://bingo.png")
@@ -347,7 +390,7 @@ async def handle_complete_fail(message):
 
         confirm = discord.Embed(
             title="✅ User Updated!",
-            description=f"Position `{position}` marked as completed for <@{user_id}> 💪",
+            description=f"Position {position} marked as completed for <@{user_id}> 💪",
             color=0x00ff00
         )
         await message.channel.send(embed=confirm)
@@ -355,7 +398,7 @@ async def handle_complete_fail(message):
     elif message.content.startswith(".fail"):
         fail_embed = discord.Embed(
             title="❌ Field Rejected",
-            description=f"Your submission for position `{position}` was rejected. 😕 Please try again later! 📷",
+            description=f"Your submission for position {position} was rejected. 😕 Please try again later! 📷",
             color=0xFF0000
         )
         fail_embed.set_footer(text="Better luck next time 🍀")
@@ -366,7 +409,7 @@ async def handle_complete_fail(message):
 
         confirm = discord.Embed(
             title="📪 Rejection Sent!",
-            description=f"Rejection message sent for `{position}` to <@{user_id}> ❌",
+            description=f"Rejection message sent for {position} to <@{user_id}> ❌",
             color=0xFF9900
         )
         await message.channel.send(embed=confirm)
